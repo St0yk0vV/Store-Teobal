@@ -1,10 +1,11 @@
 // Категории според зададените
 const CATEGORIES = ["Хамони","Кашкавали","Турони","Вино","Други хранителни","Други нехранителни"];
-const LS_KEY = "inventory_v1";
+const LS_KEY = "inventory_v2"; // нов ключ (ако искаш да запазиш старите данни, прехвърли ги ръчно)
 
 // DOM
 const searchEl = document.getElementById("search");
 const filterCategoryEl = document.getElementById("filterCategory");
+
 const nameEl = document.getElementById("name");
 const categoryEl = document.getElementById("category");
 const unitEl = document.getElementById("unit");
@@ -12,26 +13,50 @@ const priceEl = document.getElementById("price");
 const qtyEl = document.getElementById("qty");
 const minEl = document.getElementById("min");
 const addBtn = document.getElementById("addBtn");
+
 const tbody = document.getElementById("tbody");
 const totalsEl = document.getElementById("totals");
 const exportBtn = document.getElementById("exportExcel");
 const clearAllBtn = document.getElementById("clearAll");
 
-// Състояние
-let items = load() || [];
+// Продажби
+const sellItemSel = document.getElementById("sellItem");
+const sellQtyEl = document.getElementById("sellQty");
+const sellBtn = document.getElementById("sellBtn");
+const salesBody = document.getElementById("salesBody");
 
-// Полезни
+// Състояние
+let state = load() || { items: [], sales: [] }; // items[], sales[]
+
+// Помощни
 function n(v){ return Number(v || 0); }
 function money(v){ return n(v).toFixed(2) + " лв"; }
-function save(){ localStorage.setItem(LS_KEY, JSON.stringify(items)); }
-function load(){ try { return JSON.parse(localStorage.getItem(LS_KEY)||"[]"); } catch { return []; } }
+function nowStr(){ return new Date().toLocaleString('bg-BG', { hour12:false }); }
 
-// Рендер таблица
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+function load(){ try { return JSON.parse(localStorage.getItem(LS_KEY) || ""); } catch { return null; } }
+
+// Нормализиране за сравнение (за сливане на артикули)
+function norm(s){ return String(s||"").trim().toLowerCase(); }
+
+// Намира артикул по ключ: име+категория+единица
+function findItemIndex(name, category, unit){
+  const N = norm(name), C = norm(category), U = norm(unit);
+  return state.items.findIndex(it => norm(it.name)===N && norm(it.category)===C && norm(it.unit)===U);
+}
+
+// Рендер на таблица и продажби
 function render(){
+  renderInventoryTable();
+  renderSellOptions();
+  renderSalesLog();
+}
+
+function renderInventoryTable(){
   const term = (searchEl.value || "").toLowerCase().trim();
   const cat = filterCategoryEl.value || "";
 
-  const filtered = items.filter(it => {
+  const filtered = state.items.filter(it => {
     const matchesText = !term || it.name.toLowerCase().includes(term);
     const matchesCat = !cat || it.category === cat;
     return matchesText && matchesCat;
@@ -66,9 +91,9 @@ function render(){
     // действия
     const tdActions = document.createElement("td");
     tdActions.append(
-      btn("+", "action-btn action-plus", () => adjustSold(it, -1)), // -1 sold = добавяме наличност чрез корекция
+      btn("+", "action-btn action-plus", () => adjustStock(it, +1)),   // добавя наличности (бърза корекция)
       space(),
-      btn("−", "action-btn action-minus", () => adjustSold(it, +1)), // +1 sold = изход
+      btn("−", "action-btn action-minus", () => adjustStock(it, -1)),  // отнема наличности (бърза корекция)
       space(),
       btn("✎", "action-btn action-edit", () => editItem(it)),
       space(),
@@ -82,36 +107,83 @@ function render(){
   totalsEl.textContent = `Обща стойност: ${money(totalValue)}`;
 }
 
+function renderSellOptions(){
+  // списък за продажби – показва името + (категория/ед.)
+  sellItemSel.innerHTML = "";
+  state.items
+    .slice()
+    .sort((a,b)=>a.name.localeCompare(b.name,'bg'))
+    .forEach(it => {
+      const remain = n(it.qty) - n(it.sold);
+      const opt = document.createElement("option");
+      opt.value = it.id;
+      opt.textContent = `${it.name} — ${it.category} (${it.unit}) · останали: ${remain.toFixed(2)}`;
+      sellItemSel.appendChild(opt);
+    });
+}
+
+function renderSalesLog(){
+  salesBody.innerHTML = "";
+  // показваме последните 30 записа, най-новите отгоре
+  const last = state.sales.slice(-30).reverse();
+  last.forEach(rec => {
+    const tr = document.createElement("tr");
+    tr.append(
+      td(rec.datetime),
+      td(rec.name),
+      td(rec.category),
+      td(n(rec.qty).toFixed(2)),
+      td(rec.unit),
+      td(money(rec.price)),
+      td(money(n(rec.qty)*n(rec.price)))
+    );
+    salesBody.appendChild(tr);
+  });
+}
+
 function td(text){ const d=document.createElement("td"); d.textContent=String(text); return d; }
 function btn(text, cls, onClick){ const b=document.createElement("button"); b.textContent=text; b.className=cls; b.onclick=onClick; return b; }
 function space(){ return document.createTextNode(" "); }
 
-// Добавяне
+// Добавяне / сливане
 addBtn.addEventListener("click", () => {
   const name = (nameEl.value || "").trim();
   const category = categoryEl.value;
   const unit = unitEl.value;
   const price = parseFloat(priceEl.value);
-  const qty = parseFloat(qtyEl.value);
+  const addQty = parseFloat(qtyEl.value);
   const min = parseFloat(minEl.value);
 
-  if (!name || isNaN(price) || isNaN(qty)) {
-    alert("Моля, въведете валидни 'Продукт', 'Цена' и 'Налични'.");
+  if (!name || isNaN(price) || isNaN(addQty) || addQty < 0) {
+    alert("Моля, въведете валидни 'Продукт', 'Цена' и 'Количество за добавяне'.");
     return;
   }
-  const item = {
-    id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+Math.random()),
-    name, category, unit,
-    price: n(price), qty: n(qty),
-    sold: 0,
-    min: isNaN(min) ? 0 : n(min)
-  };
-  items.push(item);
+
+  // търсим съществуващ артикул по ключ име+категория+единица
+  const idx = findItemIndex(name, category, unit);
+
+  if (idx >= 0) {
+    // вече има такъв артикул → увеличаваме наличността и евентуално актуализираме цена/праг
+    state.items[idx].qty = n(state.items[idx].qty) + n(addQty);
+    if (!isNaN(min)) state.items[idx].min = n(min);     // по желание – обнови прага
+    if (!isNaN(price)) state.items[idx].price = n(price); // ако се е променила цена
+  } else {
+    // нов артикул
+    state.items.push({
+      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+Math.random()),
+      name, category, unit,
+      price: n(price),
+      qty: n(addQty),
+      sold: 0,
+      min: isNaN(min) ? 0 : n(min)
+    });
+  }
+
   save();
-  clearForm();
+  clearAddForm();
   render();
 });
-function clearForm(){
+function clearAddForm(){
   nameEl.value = "";
   priceEl.value = "";
   qtyEl.value = "";
@@ -119,25 +191,93 @@ function clearForm(){
   nameEl.focus();
 }
 
+// Продажба / използване
+sellBtn.addEventListener("click", () => {
+  const id = sellItemSel.value;
+  const qty = parseFloat(sellQtyEl.value);
+  if (!id || isNaN(qty) || qty <= 0) {
+    alert("Моля, изберете артикул и въведете валидно количество.");
+    return;
+  }
+  const it = state.items.find(x => x.id === id);
+  if (!it) return;
+
+  const remain = n(it.qty) - n(it.sold);
+  if (qty > remain) {
+    if (!confirm(`Искате да продадете ${qty}, но налични са само ${remain.toFixed(2)}. Продължаваме ли?`)) {
+      return;
+    }
+  }
+
+  it.sold = n(it.sold) + n(qty);
+
+  // запис в дневник
+  state.sales.push({
+    datetime: nowStr(),
+    id: it.id,
+    name: it.name,
+    category: it.category,
+    unit: it.unit,
+    price: n(it.price),
+    qty: n(qty)
+  });
+
+  save();
+  sellQtyEl.value = "";
+  render();
+});
+
+// Бърза корекция на наличности (+/-)
+function adjustStock(it, delta){
+  // delta = +1 добавя към qty (вход), delta = -1 увеличава sold (изход)
+  if (delta > 0) {
+    it.qty = n(it.qty) + delta;
+  } else if (delta < 0) {
+    const remain = n(it.qty) - n(it.sold);
+    if (remain < 1 && !confirm("Няма наличност. Все пак да отчетем изход?")) return;
+    it.sold = Math.max(0, n(it.sold) + Math.abs(delta));
+    // дневник и за тези корекции
+    state.sales.push({
+      datetime: nowStr(),
+      id: it.id,
+      name: it.name,
+      category: it.category,
+      unit: it.unit,
+      price: n(it.price),
+      qty: 1
+    });
+  }
+  save(); render();
+}
+
 // Редакция
 function editItem(it){
   const name = prompt("Продукт:", it.name);
   if (name===null) return;
+
   const category = prompt("Категория (точно):", it.category);
   if (category===null) return;
+
   const unit = prompt("Единица (бр/кг/л):", it.unit);
   if (unit===null) return;
+
   const price = parseFloat(prompt("Цена (лв/ед.):", it.price));
   if (isNaN(price)) return alert("Невалидна цена.");
+
   const qty = parseFloat(prompt("Налични (вход):", it.qty));
   if (isNaN(qty)) return alert("Невалидно количество.");
-  const min = parseFloat(prompt("Мин. праг:", it.min || 0)); // може да е празно
+
+  const sold = parseFloat(prompt("Продадени/използвани:", it.sold || 0));
+  if (isNaN(sold)) return alert("Невалидни продадени.");
+
+  const min = parseFloat(prompt("Мин. праг:", it.min || 0));
 
   it.name = name.trim();
   it.category = category.trim();
   it.unit = unit.trim();
   it.price = n(price);
   it.qty = n(qty);
+  it.sold = n(sold);
   it.min = isNaN(min) ? 0 : n(min);
   save(); render();
 }
@@ -145,30 +285,20 @@ function editItem(it){
 // Изтриване
 function delItem(it){
   if (!confirm(`Да изтрия „${it.name}“?`)) return;
-  items = items.filter(x => x.id !== it.id);
+  state.items = state.items.filter(x => x.id !== it.id);
+  // по желание можеш да изтриеш и свързаните продажби; тук ги оставяме като архив
   save(); render();
 }
 
-// Корекция продадени/използвани
-function adjustSold(it, delta){
-  const newSold = n(it.sold) + delta;
-  if (newSold < 0) return; // не допускаме отрицателни
-  if (newSold > n(it.qty)) {
-    if (!confirm("Продаденото надхвърля първоначално наличното. Все пак ли?")) return;
-  }
-  it.sold = newSold;
-  save(); render();
-}
-
-// Филтри
+// Филтри и търсене
 searchEl.addEventListener("input", render);
 filterCategoryEl.addEventListener("change", render);
 
-// Експорт към Excel (+ CSV fallback)
+// Експорт към Excel (два листа: Наличности + Продажби) + CSV fallback
 exportBtn.addEventListener("click", () => {
   try {
     if (typeof XLSX !== "undefined" && XLSX?.utils) {
-      const rows = items.map((it, i) => {
+      const rowsInv = state.items.map((it, i) => {
         const remain = n(it.qty) - n(it.sold);
         return {
           "#": i+1,
@@ -183,9 +313,23 @@ exportBtn.addEventListener("click", () => {
           "Мин. праг": n(it.min || 0)
         };
       });
-      const ws = XLSX.utils.json_to_sheet(rows);
+      const wsInv = XLSX.utils.json_to_sheet(rowsInv);
+
+      const rowsSales = state.sales.map((s, i) => ({
+        "#": i+1,
+        "Дата/час": s.datetime,
+        "Продукт": s.name,
+        "Категория": s.category,
+        "Кол-во": n(s.qty),
+        "Ед.": s.unit,
+        "Ед. цена": n(s.price),
+        "Стойност": n(s.qty)*n(s.price)
+      }));
+      const wsSales = XLSX.utils.json_to_sheet(rowsSales.length ? rowsSales : [{ "Дата/час":"—" }]);
+
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Наличности");
+      XLSX.utils.book_append_sheet(wb, wsInv, "Наличности");
+      XLSX.utils.book_append_sheet(wb, wsSales, "Продажби");
       XLSX.writeFile(wb, "inventory.xlsx");
     } else {
       exportCSV();
@@ -195,10 +339,11 @@ exportBtn.addEventListener("click", () => {
     exportCSV();
   }
 });
+
 function exportCSV(filename="inventory.csv"){
-  const headers = ["#","Продукт","Категория","Ед.","Цена","Налични","Продадени","Останали","Стойност","Мин. праг"];
-  const lines = [headers.join(",")];
-  items.forEach((it, i) => {
+  const headersInv = ["#","Продукт","Категория","Ед.","Цена","Налични","Продадени","Останали","Стойност","Мин. праг"];
+  const linesInv = [headersInv.join(",")];
+  state.items.forEach((it, i) => {
     const remain = n(it.qty) - n(it.sold);
     const row = [
       i+1, it.name, it.category, it.unit,
@@ -209,24 +354,38 @@ function exportCSV(filename="inventory.csv"){
       (remain * n(it.price)).toFixed(2),
       n(it.min || 0).toFixed(2)
     ];
-    lines.push(row.map(csvEscape).join(","));
+    linesInv.push(row.map(csvEscape).join(","));
   });
-  const blob = new Blob([lines.join("\n")], { type:"text/csv;charset=utf-8" });
+
+  const headersSales = ["#","Дата/час","Продукт","Категория","Кол-во","Ед.","Ед. цена","Стойност"];
+  const linesSales = [headersSales.join(",")];
+  state.sales.forEach((s, i) => {
+    const row = [
+      i+1, s.datetime, s.name, s.category,
+      n(s.qty).toFixed(2), s.unit,
+      n(s.price).toFixed(2),
+      (n(s.qty)*n(s.price)).toFixed(2)
+    ];
+    linesSales.push(row.map(csvEscape).join(","));
+  });
+
+  const csv = [
+    "НАЛИЧНОСТИ", ...linesInv, "",
+    "ПРОДАЖБИ", ...linesSales
+  ].join("\n");
+
+  const blob = new Blob([csv], { type:"text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a"); a.href=url; a.download=filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
 function csvEscape(v){
   const s = String(v ?? "");
   return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
 }
 
-// Изчистване на всичко
-clearAllBtn.addEventListener("click", () => {
-  if (!confirm("Сигурни ли сте, че искате да изтриете всички артикули?")) return;
-  items = []; save(); render();
-});
-
-// Първоначално
+// Старт
 render();
+
