@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Склад наличности</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- SheetJS за Excel експорт -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script>
+    /* резервен CDN ако първият е блокиран */
+    window.addEventListener('error', () => {
+      if (!window.XLSX) {
+        const s = document.createElement('script');
+        s.defer = true;
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+        document.head.appendChild(s);
+      }
+    });
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>📦 Склад наличности</h1>
+    <p class="muted">Категории: хамони, кашкавали, турони, вино, др. хранителни, др. нехранителни</p>
+  </header>
+
+  <main>
+    <!-- Контроли -->
+    <section class="panel">
+      <div class="controls">
+        <input id="search" type="text" placeholder="Търси продукт…" />
+        <select id="filterCategory">
+          <option value="">Всички категории</option>
+          <option>Хамони</option>
+          <option>Кашкавали</option>
+          <option>Турони</option>
+          <option>Вино</option>
+          <option>Други хранителни</option>
+          <option>Други нехранителни</option>
+        </select>
+        <button id="exportExcel">💾 Експорт към Excel</button>
+        <button id="clearAll" class="secondary">🧹 Изчисти всичко</button>
+      </div>
+    </section>
+
+    <!-- Форма нов продукт -->
+    <section class="panel">
+      <h2>Добави продукт</h2>
+      <div class="form">
+        <input id="name" type="text" placeholder="Продукт (напр. Хамон Серано 100 г)" />
+        <select id="category">
+          <option>Хамони</option>
+          <option>Кашкавали</option>
+          <option>Турони</option>
+          <option>Вино</option>
+          <option>Други хранителни</option>
+          <option>Други нехранителни</option>
+        </select>
+        <select id="unit">
+          <option>бр</option>
+          <option>кг</option>
+          <option>л</option>
+        </select>
+        <input id="price" type="number" step="0.01" min="0" placeholder="Цена (лв/ед.)" />
+        <input id="qty" type="number" step="0.01" min="0" placeholder="Налични (вход)" />
+        <input id="min" type="number" step="0.01" min="0" placeholder="Мин. праг" />
+        <button id="addBtn">➕ Добави</button>
+      </div>
+    </section>
+
+    <!-- Таблица -->
+    <section class="panel">
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Продукт</th>
+              <th>Категория</th>
+              <th>Ед.</th>
+              <th>Цена</th>
+              <th>Налични</th>
+              <th>Продадени/използвани</th>
+              <th>Останали</th>
+              <th>Стойност</th>
+              <th>Праг</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="11" id="totals" class="totals">Обща стойност: 0.00 лв</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>© 2025 Inventory | Made by V. Stoykov</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
